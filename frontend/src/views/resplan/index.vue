@@ -67,6 +67,26 @@
       <span>共 {{ total }} 条保障资源调度记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
+
+    <section class="ledger-block">
+      <h3>除冰液需求台账</h3>
+      <p class="page-desc">由除冰作业「确认完成」时的重算结果回写，与除冰明细、本月除冰液用量同源，资源调度直接读取。</p>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th v-for="column in ledgerColumns" :key="column">{{ column }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in ledger" :key="String(row.id)">
+            <td v-for="column in ledgerColumns" :key="column">{{ row[column] ?? '—' }}</td>
+          </tr>
+          <tr v-if="!ledger.length">
+            <td :colspan="ledgerColumns.length" class="empty-state">本月暂无除冰液需求台账记录</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
   </section>
 </template>
 
@@ -75,6 +95,7 @@ import { computed, onMounted, ref } from 'vue'
 
 import {
   downloadEntries,
+  listDeiceFluidLedger,
   listEntries,
   moduleMeta,
   runAction as applyAction,
@@ -86,8 +107,10 @@ const columns = ["计划编号", "保障时段", "机位需求", "车辆需求",
 const actions = ["提交审核", "下发计划", "作废计划"]
 const statuses = ["待编制", "待审核", "已下发", "已作废"]
 const stats = [{"label": "待编制计划", "value": 0}, {"label": "已下发计划", "value": 0}, {"label": "存在缺口的计划", "value": 0}]
+const ledgerColumns = ["除冰液型号", "台账月份", "本月用量", "入账任务数", "最近重算时间", "数据来源"]
 
 const rows = ref<EntryRow[]>([])
+const ledger = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
@@ -128,6 +151,7 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    ledger.value = listDeiceFluidLedger()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '保障资源调度列表读取失败'
   }

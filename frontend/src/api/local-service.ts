@@ -1,3 +1,5 @@
+import { DEICE_CONFIRM_ACTION, DEICE_KEY, DEICE_LEDGER_KEY, finalizeDeiceRow, summarizeFluidUsage } from '@/data/deice'
+import type { FluidUsageSummary } from '@/data/deice'
 import { MODULE_BY_KEY } from '@/data/modules'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
@@ -43,12 +45,26 @@ export function runAction(key: string, id: number, action: string): ActionResult
   if (current === target) {
     return { ok: false, message: `${meta.entity}已经是「${target}」，不用重复操作` }
   }
+  // 状态机校验：登记了 actionFrom 的模块只许逐级流转。除冰即 待除冰→除冰中→待确认→已完成，
+  // 除冰中之前不许直接完成，已完成没有任何出边、回不到除冰中，跨级一律驳回。
+  const allowedFrom = meta.actionFrom?.[action]
+  if (allowedFrom && !allowedFrom.includes(current)) {
+    const fromText = allowedFrom.map((status) => `「${status}」`).join('、')
+    return {
+      ok: false,
+      message: `${meta.entity}当前状态「${current}」，不能执行「${action}」：只允许从${fromText}流转，跨级操作已驳回`,
+    }
+  }
   const lastStatus = meta.statuses[meta.statuses.length - 1]
-  const updated: EntryRow = {
+  let updated: EntryRow = {
     ...rows[index],
     status: target,
     pending: target !== lastStatus,
     abnormal: NEGATIVE_ACTIONS.some((verb) => action.startsWith(verb)),
+  }
+  if (key === DEICE_KEY && action === DEICE_CONFIRM_ACTION) {
+    // 确认完成在这里落锤重算一次：时长按起止时间定稿、盖章入账，台账随 saveRows 一起回写。
+    updated = finalizeDeiceRow(updated)
   }
   const next = [...rows]
   next[index] = updated
@@ -59,6 +75,16 @@ export function runAction(key: string, id: number, action: string): ActionResult
 export function resetModule(key: string): PageResult {
   resetRows(key)
   return listEntries(key)
+}
+
+/** 本月除冰液用量（按型号）：与明细读同一份重算结果，不再另走一条汇总路。 */
+export function deiceUsageSummary(now: Date = new Date()): FluidUsageSummary[] {
+  return summarizeFluidUsage(listRows(DEICE_KEY), now)
+}
+
+/** 除冰液需求台账：确认完成时由重算结果回写，保障资源调度直接读这张表。 */
+export function listDeiceFluidLedger(): EntryRow[] {
+  return listRows(DEICE_LEDGER_KEY)
 }
 
 export function exportEntries(key: string): { filename: string; content: string } {

@@ -3,7 +3,7 @@
     <header class="page-head">
       <div>
         <h2>除冰作业管理</h2>
-        <p class="page-desc">维护除冰任务，围绕任务编号、航班号、除冰液型号、喷洒量做登记、筛选与状态流转。</p>
+        <p class="page-desc">维护除冰任务，围绕任务编号、航班号、除冰液型号、喷洒量做登记、筛选与状态流转。作业时长按开始与结束时间统一重算，明细与月度用量同源。</p>
       </div>
       <div class="page-actions">
         <button class="btn primary" type="button" @click="openCreate">登记除冰任务</button>
@@ -22,6 +22,13 @@
       <span v-for="item in statusSummary" :key="item.status" class="legend-item">
         {{ item.status }}：{{ item.count }}
       </span>
+    </p>
+
+    <p class="status-legend">
+      <span v-for="item in usage" :key="item.fluid" class="legend-item">
+        {{ item.fluid }}本月用量：{{ item.amount }} 升（{{ item.tasks }} 架次）
+      </span>
+      <span v-if="!usage.length" class="legend-item">本月暂无已完成的除冰液用量</span>
     </p>
 
     <form class="filter-bar" @submit.prevent="reload">
@@ -43,11 +50,11 @@
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td v-for="column in columns" :key="column">{{ row[column] === '' ? '—' : (row[column] ?? '—') }}</td>
           <td>{{ row.status }}</td>
           <td class="row-actions">
             <button
-              v-for="action in actions"
+              v-for="action in availableActions(row)"
               :key="action"
               class="link"
               type="button"
@@ -55,6 +62,7 @@
             >
               {{ action }}
             </button>
+            <span v-if="!availableActions(row).length">—</span>
           </td>
         </tr>
         <tr v-if="!rows.length">
@@ -74,23 +82,24 @@
 import { computed, onMounted, ref } from 'vue'
 
 import {
+  deiceUsageSummary,
   downloadEntries,
   listEntries,
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
+import type { FluidUsageSummary } from '@/data/deice'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('deice')
-const columns = ["任务编号", "航班号", "除冰液型号", "喷洒量", "除冰车号", "作业时长", "操作人员", "任务状态"]
-const actions = ["开始除冰", "提交确认", "确认完成"]
+const columns = ["任务编号", "航班号", "除冰液型号", "喷洒量", "除冰车号", "开始时间", "结束时间", "登记时长", "作业时长", "时长来源", "操作人员", "任务状态"]
 const statuses = ["待除冰", "除冰中", "待确认", "已完成"]
-const stats = [{"label": "今日除冰架次", "value": 0}, {"label": "除冰中任务", "value": 0}, {"label": "本月除冰液用量", "value": 0}]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
+const usage = ref<FluidUsageSummary[]>([])
 const filterFields = columns.slice(0, 3)
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
@@ -98,6 +107,30 @@ const statusSummary = computed(() =>
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+const stats = computed(() => {
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const todayKey = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+  const todayCount = rows.value.filter((row) => String(row['开始时间'] ?? '').startsWith(todayKey)).length
+  const working = rows.value.filter((row) => String(row.status) === '除冰中').length
+  const monthAmount = usage.value.reduce((sum, item) => sum + item.amount, 0)
+  return [
+    { label: '今日除冰架次', value: todayCount },
+    { label: '除冰中任务', value: working },
+    { label: '本月除冰液用量', value: `${monthAmount} 升` },
+  ]
+})
+
+// 页面动作层与状态机对齐：只给出当前状态允许的动作，跨级操作在入口处就不出现。
+function availableActions(row: EntryRow): string[] {
+  const actionFrom = meta.actionFrom
+  if (!actionFrom) {
+    return meta.actions
+  }
+  const current = String(row.status)
+  return meta.actions.filter((action) => (actionFrom[action] ?? []).includes(current))
+}
 
 function resetFilters() {
   filters.value = {}
@@ -128,6 +161,7 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    usage.value = deiceUsageSummary()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '除冰作业列表读取失败'
   }
