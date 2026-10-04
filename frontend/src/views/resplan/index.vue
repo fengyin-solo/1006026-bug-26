@@ -63,6 +63,26 @@
       </tbody>
     </table>
 
+    <section class="ledger-block">
+      <h3>除冰液需求台账（资源调度读数）</h3>
+      <p class="ledger-hint">由除冰作业「确认完成」时回写，与除冰作业明细、月度用量同一重算口径，只含已完成作业。</p>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th v-for="column in ledgerColumns" :key="column">{{ column }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(entry, index) in ledger" :key="`${entry.任务编号}-${index}`">
+            <td v-for="column in ledgerColumns" :key="column">{{ formatLedgerCell(column, entry) }}</td>
+          </tr>
+          <tr v-if="!ledger.length">
+            <td :colspan="ledgerColumns.length" class="empty-state">暂无已完成除冰作业回写的需求台账</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
     <footer class="page-foot">
       <span>共 {{ total }} 条保障资源调度记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
@@ -79,6 +99,8 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
+import { getDeiceLedger } from '@/api/deice-service'
+import type { DeiceLedgerEntry } from '@/data/deice'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('resplan')
@@ -86,6 +108,21 @@ const columns = ["计划编号", "保障时段", "机位需求", "车辆需求",
 const actions = ["提交审核", "下发计划", "作废计划"]
 const statuses = ["待编制", "待审核", "已下发", "已作废"]
 const stats = [{"label": "待编制计划", "value": 0}, {"label": "已下发计划", "value": 0}, {"label": "存在缺口的计划", "value": 0}]
+
+// 除冰液需求台账：列与除冰侧台账结构一致，读的是同一份落库数据。
+const ledgerColumns = ["任务编号", "航班号", "除冰液型号", "喷洒量", "作业分钟数", "开始时间", "结束时间", "完成月份"]
+const ledger = ref<DeiceLedgerEntry[]>([])
+
+function formatLedgerCell(column: string, entry: DeiceLedgerEntry): string {
+  const value = (entry as unknown as Record<string, string | number>)[column]
+  if (column === '喷洒量') {
+    return `${value} L`
+  }
+  if (column === '作业分钟数') {
+    return `${value} 分钟`
+  }
+  return value === '' || value === undefined ? '—' : String(value)
+}
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
@@ -128,6 +165,8 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    // 资源调度线读取除冰液需求台账：与除冰明细读同一份落库结果，数值不会两样。
+    ledger.value = getDeiceLedger()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '保障资源调度列表读取失败'
   }
@@ -135,3 +174,22 @@ function reload() {
 
 onMounted(reload)
 </script>
+
+<style scoped>
+.ledger-block {
+  margin-top: 18px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+.ledger-block h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+.ledger-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+</style>
